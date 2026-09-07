@@ -11,14 +11,14 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from .config import CONFIG_PATH, Config, config_template, load_config
-from .executor import run_command
+from .executor import run_command, shell_syntax_is_valid
 from .llm import OllamaClient, OllamaError
 from .photo_organizer import apply_photo_organize_plan, build_photo_organize_plan
 from .safety import SafetyLevel, assess
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
-SUBCOMMANDS = {"doctor", "explain", "config-init", "organize-photos"}
+SUBCOMMANDS = {"doctor", "explain", "config-init", "organize-photos", "shell-init"}
 
 
 def with_model(config: Config, model: str | None) -> Config:
@@ -47,6 +47,8 @@ def run_request(request: list[str], *, dry_run: bool, yes: bool, model: str | No
     text = " ".join(request)
 
     try:
+        if not client.model_is_loaded(config.model):
+            console.print(f"[dim]Loading {config.model} into memory (first request is slow)...[/dim]")
         with console.status(f"Asking Ollama ({config.model})...", spinner="dots"):
             proposal = client.propose_command(text, cwd=str(Path.cwd()))
     except KeyboardInterrupt as exc:
@@ -69,6 +71,12 @@ def run_request(request: list[str], *, dry_run: bool, yes: bool, model: str | No
         console.print("[yellow]Cancelled.[/yellow]")
         return
 
+    ok, error = shell_syntax_is_valid(proposal.command)
+    if not ok:
+        console.print("[bold red]Refusing to run: the command does not parse cleanly under zsh.[/bold red]")
+        console.print(error, style="red")
+        raise typer.Exit(2)
+
     result = run_command(proposal.command)
     if result.stdout:
         console.print(result.stdout, end="")
@@ -80,9 +88,12 @@ def run_request(request: list[str], *, dry_run: bool, yes: bool, model: str | No
 @app.command()
 def explain(command: Annotated[str, typer.Argument(help="Shell command to explain.")]) -> None:
     config = load_config()
+    client = OllamaClient(config)
     try:
+        if not client.model_is_loaded(config.model):
+            console.print(f"[dim]Loading {config.model} into memory (first request is slow)...[/dim]")
         with console.status(f"Asking Ollama ({config.model})...", spinner="dots"):
-            text = OllamaClient(config).explain(command)
+            text = client.explain(command)
     except KeyboardInterrupt as exc:
         console.print("\n[yellow]Cancelled.[/yellow]")
         raise typer.Exit(130) from exc
@@ -189,6 +200,25 @@ def config_init(force: Annotated[bool, typer.Option("--force", help="Overwrite e
     console.print(f"[green]Wrote config:[/green] {CONFIG_PATH}")
 
 
+@app.command("shell-init")
+def shell_init(apply: Annotated[bool, typer.Option("--apply", help="Append the line to ~/.zshrc.")] = False) -> None:
+    snippet = (
+        "# zsh fails on unquoted request words containing ? * [ ] (e.g. `please what is on port 8188?`).\n"
+        "setopt nonomatch"
+    )
+    if not apply:
+        console.print(Panel(snippet, title="Add to ~/.zshrc", border_style="cyan"))
+        return
+
+    rc = Path.home() / ".zshrc"
+    existing = rc.read_text() if rc.exists() else ""
+    if "setopt nonomatch" in existing:
+        console.print(f"[green]Already present in[/green] {rc}")
+        return
+    rc.write_text(existing.rstrip() + "\n\n" + snippet + "\n")
+    console.print(f"[green]Added to[/green] {rc}. New terminals get it automatically; run `source {rc}` to apply now.")
+
+
 def render_proposal(command: str, explanation: str, model_risk: str, notes: list[str], safety) -> None:
     table = Table.grid(padding=(0, 1))
     table.add_column(style="bold")
@@ -219,22 +249,8 @@ def confirm_execution(level: SafetyLevel, *, yes: bool, phrase: str | None) -> b
     return typer.confirm("Run?", default=False)
 
 
-def entrypoint() -> None:
-    try:
-        _entrypoint()
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Cancelled.[/yellow]")
-        raise SystemExit(130) from None
-    except typer.Exit as exc:
-        raise SystemExit(exc.exit_code) from None
-
-
-def _entrypoint() -> None:
-    args = sys.argv[1:]
-    if not args or args[0] in SUBCOMMANDS or args[0] in {"--help", "-h"}:
-        app()
-        return
-
+def parse_request_args(args: list[str]) -> tuple[list[str], bool, bool, str | None]:
+    """Split request words from global flags, regardless of position in args."""
     dry_run = False
     yes = False
     model: str | None = None
@@ -255,8 +271,33 @@ def _entrypoint() -> None:
         elif arg.startswith("--model="):
             model = arg.split("=", 1)[1]
         else:
-            request.extend(args[i:])
-            break
+            request.append(arg)
         i += 1
+    return request, dry_run, yes, model
 
+
+def entrypoint() -> None:
+    try:
+        _entrypoint()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        raise SystemExit(130) from None
+    except typer.exceptions.Abort:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        raise SystemExit(130) from None
+    except typer.Exit as exc:
+        raise SystemExit(exc.exit_code) from None
+
+
+def _entrypoint() -> None:
+    args = sys.argv[1:]
+    if not args or args[0] in SUBCOMMANDS or args[0] in {"--help", "-h"}:
+        if args and args[0] == "explain" and len(args) != 2:
+            console.print('[red]`please explain` takes a single command in quotes.[/red]')
+            console.print('[dim]e.g. [bold]please explain "lsof -i :8188"[/bold][/dim]')
+            raise SystemExit(2)
+        app()
+        return
+
+    request, dry_run, yes, model = parse_request_args(args)
     run_request(request, dry_run=dry_run, yes=yes, model=model)

@@ -11,10 +11,10 @@ CONFIG_PATH = Path.home() / ".config" / "please" / "config.yaml"
 
 @dataclass(frozen=True)
 class Config:
-    model: str = "llama3.2:latest"
-    fallback_model: str | None = None
+    model: str = "qwen3:8b"
+    fallback_model: str | None = "llama3.2:latest"
     ollama_url: str = "http://127.0.0.1:11434"
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 120.0
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -37,7 +37,7 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
 def config_template() -> dict[str, Any]:
     return {
         "default_model": Config.model,
-        "fallback_model": "qwen3:8b",
+        "fallback_model": "llama3.2:latest",
         "ollama_url": Config.ollama_url,
         "timeout_seconds": Config.timeout_seconds,
     }

@@ -13,7 +13,7 @@ class RecipeProposal:
 
 
 def match_recipe(request: str) -> RecipeProposal | None:
-    return numbered_text_files(request)
+    return numbered_text_files(request) or rename_files_in_folder(request) or None
 
 
 def numbered_text_files(request: str) -> RecipeProposal | None:
@@ -50,4 +50,31 @@ def numbered_text_files(request: str) -> RecipeProposal | None:
         explanation=f"Creates {count} numbered .txt files in the current directory, with each file containing its number.",
         risk="low",
         notes=["Uses relative paths in the current directory."],
+    )
+
+
+def rename_files_in_folder(request: str) -> RecipeProposal | None:
+    normalized = " ".join(request.lower().split())
+    if not re.search(r"\b(rename|convert)\b", normalized):
+        return None
+    if not any(phrase in normalized for phrase in ("this folder", "current folder", "current directory", "here")):
+        return None
+
+    match = re.search(
+        r"\ball\s+(?P<old>[a-z0-9]{1,6})\s+files?\s+(?:to|into|as)\s+(?P<new>[a-z0-9]{1,6})\b",
+        normalized,
+    )
+    if not match:
+        return None
+
+    old, new = match.group("old"), match.group("new")
+    if old == new:
+        return None
+
+    command = f'for f in *.{old}; do mv -- "$f" "${{f%.{old}}}.{new}"; done'
+    return RecipeProposal(
+        command=command,
+        explanation=f"Renames all .{old} files to .{new} in the current folder.",
+        risk="high",
+        notes=["Only handles files directly in the current folder, not subdirectories."],
     )

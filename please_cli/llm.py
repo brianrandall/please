@@ -19,6 +19,18 @@ class CommandProposal(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+COMMAND_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "command": {"type": "string"},
+        "explanation": {"type": "string"},
+        "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["command", "explanation", "risk", "notes"],
+}
+
+
 class OllamaError(RuntimeError):
     pass
 
@@ -44,9 +56,11 @@ class OllamaClient:
         for model in models:
             payload = {
                 "model": model,
+                "think": False,
+                "keep_alive": -1,
                 "stream": False,
-                "format": "json",
-                "options": {"temperature": 0, "num_predict": 300},
+                "format": COMMAND_SCHEMA,
+                "options": {"temperature": 0, "num_predict": 1200},
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": command_prompt(request=request, cwd=cwd)},
@@ -70,8 +84,10 @@ class OllamaClient:
     def explain(self, command: str) -> str:
         payload = {
             "model": self.config.model,
+            "think": False,
+            "keep_alive": -1,
             "stream": False,
-            "options": {"temperature": 0, "num_predict": 400},
+            "options": {"temperature": 0, "num_predict": 1000},
             "messages": [
                 {"role": "system", "content": "You explain zsh commands clearly and briefly."},
                 {"role": "user", "content": explain_prompt(command)},
@@ -100,6 +116,20 @@ class OllamaClient:
     def model_is_available(self, model: str | None = None) -> bool:
         wanted = model or self.config.model
         return wanted in self.available_models()
+
+    def model_is_loaded(self, model: str | None = None) -> bool:
+        wanted = model or self.config.model
+        try:
+            response = self._client.get("/api/ps")
+            response.raise_for_status()
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError):
+            return False
+        loaded = {
+            entry.get("name")
+            for entry in response.json().get("models", [])
+            if isinstance(entry, dict) and entry.get("name")
+        }
+        return wanted in loaded
 
     def _chat(self, payload: dict[str, Any]) -> str:
         try:

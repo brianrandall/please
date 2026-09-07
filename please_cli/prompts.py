@@ -18,6 +18,8 @@ Rules:
 - If the user says "this folder", "here", or "current directory", use relative paths like . or ./file, not the absolute current directory path.
 - Quote every path that contains spaces, parentheses, brackets, or shell metacharacters.
 - If creating files with content, use printf or a redirection command; touch only creates empty files.
+- For renaming or moving a set of files in one directory, use a simple `for f in *.ext; do ...; done` loop — never `find ... -exec bash -c 'mv ...'` with `+`, which misbehaves when multiple files are passed to `mv`.
+- `mv`, `rm`, and `cp` modify files; make their targets as narrow as possible and avoid recursion into subdirectories when not asked.
 """
 
 
@@ -33,6 +35,8 @@ Examples:
   Command: ls -la
 - Request: make 25 new txt files here and put the numbers 1 through 25 in them
   Command: for i in {{1..25}}; do printf '%s\\n' "$i" > "$(printf '%02d.txt' "$i")"; done
+- Request: rename all .txt files to .md in this folder
+  Command: for f in *.txt; do mv -- "$f" "${{f%.txt}}.md"; done
 
 Generate the JSON object now."""
 
