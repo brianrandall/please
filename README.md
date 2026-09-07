@@ -7,7 +7,8 @@ Local-first terminal assistant for macOS.
 ## Setup
 
 ```bash
-cd ~/Dropbox/PROJECTS/CLIAI
+git clone git@github.com:brianrandall/please.git
+cd please
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
